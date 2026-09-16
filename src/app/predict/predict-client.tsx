@@ -31,7 +31,9 @@ interface PredictResponse {
   };
 }
 
-const EXAMS = ["JEE Main", "JEE Advanced", "GATE", "NEET", "CAT", "XAT", "CLAT", "CUET"];
+// Values must match `cutoffs.exam` exactly — the predictor filters on an equality
+// match, so a label that differs from the stored value silently returns no results.
+const EXAMS = ["JEE Main", "JEE Advanced", "GATE", "NEET UG", "NEET PG", "CAT", "XAT", "CLAT", "CUET"];
 const CATEGORIES = ["General", "OBC", "SC", "ST", "EWS"];
 
 const BUCKETS = {
