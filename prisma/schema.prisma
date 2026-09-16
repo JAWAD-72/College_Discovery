@@ -1,0 +1,187 @@
+// Prisma schema for College Discovery platform
+// Normalized relational schema — no flat wide tables.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+  // NOTE: pg_trgm extension and GIN trigram index on colleges.name
+  // will be created via raw SQL migration for production PostgreSQL.
+  // PGlite (local dev) does not support pg_trgm.
+}
+
+// ─── Core enums ──────────────────────────────────────────────────────────────
+
+enum CollegeType {
+  Govt
+  Private
+  Deemed
+}
+
+enum DegreeLevel {
+  UG
+  PG
+}
+
+enum Category {
+  General
+  OBC
+  SC
+  ST
+  EWS
+}
+
+// ─── Colleges ────────────────────────────────────────────────────────────────
+
+model College {
+  id               Int         @id @default(autoincrement())
+  slug             String      @unique
+  name             String
+  shortName        String?     @map("short_name")
+  city             String
+  state            String
+  type             CollegeType
+  establishedYear  Int         @map("established_year")
+  campusAcres      Float?      @map("campus_acres")
+  hostelAvailable  Boolean     @default(true) @map("hostel_available")
+  naacGrade        String?     @map("naac_grade")
+  nirfRank         Int?        @map("nirf_rank")
+  avgRating        Float       @default(0) @map("avg_rating")
+  reviewCount      Int         @default(0) @map("review_count")
+  minFeesTotal     Int         @default(0) @map("min_fees_total")
+  maxFeesTotal     Int         @default(0) @map("max_fees_total")
+  logoUrl          String?     @map("logo_url")
+  coverUrl         String?     @map("cover_url")
+  aboutMd          String?     @map("about_md") @db.Text
+
+  courses    Course[]
+  placements Placement[]
+  reviews    Review[]
+  cutoffs    Cutoff[]
+
+  savedByUsers SavedCollege[]
+
+  @@index([state], name: "idx_colleges_state")              // Filter by state
+  @@index([type], name: "idx_colleges_type")               // Filter by institution type
+  @@index([avgRating], name: "idx_colleges_avg_rating")     // Sort/filter by rating
+  @@index([minFeesTotal], name: "idx_colleges_min_fees")    // Range filter on fees
+  @@index([maxFeesTotal], name: "idx_colleges_max_fees")    // Range filter on fees
+  @@index([nirfRank], name: "idx_colleges_nirf_rank")       // Sort by NIRF rank
+  @@map("colleges")
+}
+
+// NOTE: The GIN trigram index on colleges.name is created via a raw SQL migration
+// because Prisma does not support GIN/trigram indexes natively.
+// See: prisma/migrations/add_trigram_index.sql
+
+// ─── Courses ─────────────────────────────────────────────────────────────────
+
+model Course {
+  id            Int         @id @default(autoincrement())
+  collegeId     Int         @map("college_id")
+  name          String
+  degreeLevel   DegreeLevel @map("degree_level")
+  branch        String
+  durationYears Int         @map("duration_years")
+  totalSeats    Int?        @map("total_seats")
+  totalFees     Int         @map("total_fees")
+  examAccepted  String      @map("exam_accepted")
+
+  college College  @relation(fields: [collegeId], references: [id], onDelete: Cascade)
+  cutoffs Cutoff[]
+
+  @@index([collegeId], name: "idx_courses_college_id")      // Join from college detail
+  @@index([examAccepted], name: "idx_courses_exam_accepted") // Filter colleges by exam
+  @@index([branch], name: "idx_courses_branch")             // Filter by branch
+  @@map("courses")
+}
+
+// ─── Placements ──────────────────────────────────────────────────────────────
+
+model Placement {
+  id                   Int      @id @default(autoincrement())
+  collegeId            Int      @map("college_id")
+  year                 Int
+  highestPackageLpa    Float    @map("highest_package_lpa")
+  averagePackageLpa    Float    @map("average_package_lpa")
+  medianPackageLpa     Float    @map("median_package_lpa")
+  placementPercentage  Float    @map("placement_percentage")
+  topRecruiters        String[] @map("top_recruiters")
+
+  college College @relation(fields: [collegeId], references: [id], onDelete: Cascade)
+
+  @@index([collegeId], name: "idx_placements_college_id") // Join from college detail
+  @@map("placements")
+}
+
+// ─── Reviews ─────────────────────────────────────────────────────────────────
+
+model Review {
+  id                    Int      @id @default(autoincrement())
+  collegeId             Int      @map("college_id")
+  authorName            String   @map("author_name")
+  batchYear             Int      @map("batch_year")
+  ratingOverall         Float    @map("rating_overall")
+  ratingAcademics       Float    @map("rating_academics")
+  ratingInfrastructure  Float    @map("rating_infrastructure")
+  ratingPlacements      Float    @map("rating_placements")
+  ratingFaculty         Float    @map("rating_faculty")
+  title                 String
+  body                  String   @db.Text
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  college College @relation(fields: [collegeId], references: [id], onDelete: Cascade)
+
+  @@index([collegeId], name: "idx_reviews_college_id") // Join from college detail
+  @@map("reviews")
+}
+
+// ─── Cutoffs ─────────────────────────────────────────────────────────────────
+
+model Cutoff {
+  id          Int      @id @default(autoincrement())
+  collegeId   Int      @map("college_id")
+  courseId     Int      @map("course_id")
+  exam        String
+  category    Category
+  year        Int
+  openingRank Int      @map("opening_rank")
+  closingRank Int      @map("closing_rank")
+
+  college College @relation(fields: [collegeId], references: [id], onDelete: Cascade)
+  course  Course  @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@index([collegeId, courseId], name: "idx_cutoffs_college_course") // Join from detail page
+  @@index([exam, category, closingRank], name: "idx_cutoffs_exam_cat_rank") // Rank predictor query
+  @@map("cutoffs")
+}
+
+// ─── User saved data ────────────────────────────────────────────────────────
+// users table is managed by Supabase Auth — not modeled here.
+
+model SavedCollege {
+  userId    String   @map("user_id")
+  collegeId Int      @map("college_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  college College @relation(fields: [collegeId], references: [id], onDelete: Cascade)
+
+  @@id([userId, collegeId])
+  @@index([userId], name: "idx_saved_colleges_user") // User's saved list lookup
+  @@map("saved_colleges")
+}
+
+model SavedComparison {
+  id         Int      @id @default(autoincrement())
+  userId     String   @map("user_id")
+  collegeIds Int[]    @map("college_ids")
+  title      String
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([userId], name: "idx_saved_comparisons_user") // User's saved comparisons lookup
+  @@map("saved_comparisons")
+}
